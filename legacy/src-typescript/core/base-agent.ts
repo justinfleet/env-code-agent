@@ -74,7 +74,7 @@ export abstract class BaseAgent {
       // Check if agent wants to use tools
       if (response.toolCalls && response.toolCalls.length > 0) {
         // Execute tools
-        const toolResults = [];
+        const toolResults: any[] = [];
 
         for (const toolCall of response.toolCalls) {
           console.log(`🔧 Tool: ${toolCall.name}`);
@@ -97,20 +97,39 @@ export abstract class BaseAgent {
           }
         }
 
+        // Add assistant message with initial thinking to history
+        this.messages.push({
+          role: 'assistant',
+          content: response.content
+        });
+
+        // Add user message with tool results summary to history
+        const toolSummary = response.toolCalls.map((tc, idx) => {
+          const result = toolResults[idx];
+          return `Tool ${tc.name} executed: ${JSON.stringify(result).substring(0, 200)}`;
+        }).join('\n');
+
+        this.messages.push({
+          role: 'user',
+          content: `[Tool Results]\n${toolSummary}`
+        });
+
         // Continue conversation with tool results
         const nextResponse = await this.llm.continueWithToolResults(
-          this.messages,
+          this.messages.slice(0, -2), // Use history before we added the summary
           response.toolCalls,
           toolResults,
           this.tools,
           this.systemPrompt
         );
 
-        // Add assistant message to history
-        this.messages.push({
-          role: 'assistant',
-          content: response.content + (nextResponse.content || '')
-        });
+        // Add the LLM's response after seeing tool results
+        if (nextResponse.content) {
+          this.messages.push({
+            role: 'assistant',
+            content: nextResponse.content
+          });
+        }
 
         // Check if we're done after processing tool results
         if (isComplete) {
@@ -119,7 +138,8 @@ export abstract class BaseAgent {
 
         // If agent has more to say or more tools to use
         if (nextResponse.toolCalls && nextResponse.toolCalls.length > 0) {
-          // Loop will continue to handle more tool calls
+          // We have more tool calls - they'll be handled in the next iteration
+          // The LLM will see the full conversation history including what just happened
           continue;
         } else if (nextResponse.stopReason === 'end_turn') {
           // Agent finished its turn
@@ -135,7 +155,7 @@ export abstract class BaseAgent {
       }
     }
 
-    const finalMessage = this.messages[this.messages.length - 1].content;
+    const finalMessage = this.messages[this.messages.length - 1]?.content || '';
 
     console.log(`\n✅ Agent completed after ${iteration} iterations\n`);
 

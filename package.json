@@ -8,10 +8,13 @@
     "env-clone": "./dist/cli.js"
   },
   "scripts": {
-    "dev": "tsx src/cli.ts",
+    "dev": "tsx legacy/src-typescript/cli.ts",
     "build": "tsc",
     "start": "node dist/cli.js",
-    "clone": "tsx src/cli.ts clone"
+    "clone": "python3 -m src.cli clone",
+    "explore": "python3 -m src.cli explore",
+    "test-api": "node test-api/server.js",
+    "setup-python": "pip3 install -r requirements.txt"
   },
   "keywords": [
     "api",
