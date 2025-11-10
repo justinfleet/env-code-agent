@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 from .core.llm_client import LLMClient
 from .agents.exploration_agent import ExplorationAgent
+from .agents.specification_agent import SpecificationAgent
+from .agents.code_generator_agent import CodeGeneratorAgent
 
 
 def main():
@@ -60,37 +62,100 @@ def main():
     # Initialize LLM client
     llm = LLMClient(api_key=api_key)
 
-    # Run command
-    if args.command in ["clone", "explore"]:
-        print(f"\n{'='*70}")
-        print(f"🔍 PHASE 1: AUTONOMOUS API EXPLORATION")
-        print(f"{'='*70}\n")
+    # ========================================
+    # PHASE 1: EXPLORATION
+    # ========================================
+    print(f"\n{'='*70}")
+    print(f"🔍 PHASE 1: AUTONOMOUS API EXPLORATION")
+    print(f"{'='*70}\n")
 
-        if args.endpoints:
-            print(f"📍 Starting endpoints: {', '.join(args.endpoints)}")
-        print(f"🔄 Max iterations: {args.max_iterations}\n")
+    if args.endpoints:
+        print(f"📍 Starting endpoints: {', '.join(args.endpoints)}")
+    print(f"🔄 Max iterations: {args.max_iterations}\n")
 
-        agent = ExplorationAgent(
-            llm,
-            args.target_url,
-            max_iterations=args.max_iterations
-        )
-        result = agent.explore(starting_endpoints=args.endpoints)
+    exploration_agent = ExplorationAgent(
+        llm,
+        args.target_url,
+        max_iterations=args.max_iterations
+    )
+    exploration_result = exploration_agent.explore(starting_endpoints=args.endpoints)
 
-        print(f"\n{'='*70}")
-        print(f"📊 EXPLORATION RESULTS")
-        print(f"{'='*70}\n")
+    print(f"\n{'='*70}")
+    print(f"📊 EXPLORATION RESULTS")
+    print(f"{'='*70}\n")
 
-        print(f"✅ Success: {result['success']}")
-        print(f"🔄 Iterations: {result['iterations']}")
-        print(f"\n📝 Summary:\n{result['summary']}\n")
+    print(f"✅ Success: {exploration_result['success']}")
+    print(f"🔄 Iterations: {exploration_result['iterations']}")
+    print(f"\n📝 Summary:\n{exploration_result['summary']}\n")
 
-        if result['observations']:
-            print(f"📋 Observations ({len(result['observations'])}):")
-            for i, obs in enumerate(result['observations'], 1):
-                print(f"  {i}. [{obs['category']}] {obs['observation']}")
+    if exploration_result['observations']:
+        print(f"📋 Observations ({len(exploration_result['observations'])}):")
+        for i, obs in enumerate(exploration_result['observations'], 1):
+            print(f"  {i}. [{obs['category']}] {obs['observation']}")
 
+    # If just exploring, stop here
+    if args.command == "explore":
         print()
+        return
+
+    # ========================================
+    # PHASE 2: SPECIFICATION GENERATION
+    # ========================================
+    print(f"\n{'='*70}")
+    print(f"📋 PHASE 2: SPECIFICATION GENERATION")
+    print(f"{'='*70}\n")
+
+    spec_agent = SpecificationAgent(llm)
+    spec_result = spec_agent.generate_spec(
+        observations=exploration_result['observations'],
+        target_url=args.target_url
+    )
+
+    if not spec_result['success']:
+        print("❌ Failed to generate specification")
+        sys.exit(1)
+
+    print("✅ Specification generated successfully!")
+    spec = spec_result['specification']
+    print(f"   Endpoints: {len(spec.get('endpoints', []))}")
+    print(f"   Tables: {len(spec.get('database', {}).get('tables', []))}")
+
+    # ========================================
+    # PHASE 3: CODE GENERATION
+    # ========================================
+    print(f"\n{'='*70}")
+    print(f"⚡ PHASE 3: FLEET ENVIRONMENT GENERATION")
+    print(f"{'='*70}\n")
+
+    # Create output directory
+    output_dir = os.path.join(args.output, "cloned-env")
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"📁 Output directory: {output_dir}\n")
+
+    code_agent = CodeGeneratorAgent(llm, output_dir)
+    code_result = code_agent.generate_code(specification=spec)
+
+    if not code_result['success']:
+        print("❌ Failed to generate code")
+        sys.exit(1)
+
+    print(f"\n✅ Code generation complete!")
+    print(f"   Generated {len(code_result['generated_files'])} files:")
+    for file in code_result['generated_files']:
+        print(f"   - {file}")
+
+    # ========================================
+    # COMPLETE
+    # ========================================
+    print(f"\n{'='*70}")
+    print(f"🎉 CLONING COMPLETE!")
+    print(f"{'='*70}\n")
+    print(f"📂 Fleet environment created at: {output_dir}")
+    print(f"\n📝 Next steps:")
+    print(f"   cd {output_dir}")
+    print(f"   npm install")
+    print(f"   npm run dev")
+    print()
 
 
 if __name__ == "__main__":
