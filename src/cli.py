@@ -6,6 +6,7 @@ CLI for env-code-agent - API exploration and Fleet environment generation
 import os
 import sys
 import argparse
+import shutil
 from dotenv import load_dotenv
 
 from .core.llm_client import LLMClient
@@ -127,8 +128,19 @@ def main():
     print(f"⚡ PHASE 3: FLEET ENVIRONMENT GENERATION")
     print(f"{'='*70}\n")
 
-    # Create output directory
+    # Clean and create output directory
     output_dir = os.path.join(args.output, "cloned-env")
+
+    # Remove existing directory if it exists
+    if os.path.exists(output_dir):
+        print(f"🧹 Cleaning existing output directory: {output_dir}")
+        try:
+            shutil.rmtree(output_dir)
+            print(f"   ✓ Old files removed\n")
+        except Exception as e:
+            print(f"   ⚠️  Warning: Could not fully clean directory: {e}\n")
+
+    # Create fresh output directory
     os.makedirs(output_dir, exist_ok=True)
     print(f"📁 Output directory: {output_dir}\n")
 
