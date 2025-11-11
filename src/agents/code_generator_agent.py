@@ -178,6 +178,27 @@ MUST document:
 - Error responses
 Auto-generate from the specification's endpoints list.
 
+### mprocs.yaml
+CRITICAL: cmd must be an ARRAY, not a string!
+Correct format:
+```yaml
+procs:
+  server:
+    cmd: ["pnpm", "--filter", "server", "dev"]
+    cwd: ./
+    env:
+      NODE_ENV: development
+      PORT: "3001"
+  mcp:
+    cmd: ["uv", "run", "python", "-m", "books_mcp.server"]
+    cwd: ./mcp
+    env:
+      APP_ENV: local
+      API_BASE_URL: http://localhost:3001
+```
+WRONG: cmd: pnpm --filter server dev  (string - will fail!)
+RIGHT: cmd: ["pnpm", "--filter", "server", "dev"]  (array - works!)
+
 ## Steps (Follow in Order):
 1. Create .gitignore (exclude node_modules, runtime SQLite files, logs, etc.)
 2. Create .dockerignore (exclude dev files from Docker builds)
@@ -415,6 +436,7 @@ CRITICAL Requirements:
 - MUST auto-copy seed.db to current.sqlite if not exists
 - mprocs.yaml MUST run both server and mcp processes
 - mprocs.yaml MUST set APP_ENV=local for MCP process (not RAMP_ENV)
+- mprocs.yaml cmd MUST be an array: ["pnpm", "run", "dev"], NOT a string "pnpm run dev"
 - Root package.json MUST have "dev": "mprocs" script
 - API_DOCUMENTATION.md MUST document ALL endpoints from the specification
 
