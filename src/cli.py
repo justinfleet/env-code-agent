@@ -51,6 +51,13 @@ def main():
         help="Maximum number of exploration iterations (default: 100)",
         default=100
     )
+    parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        help="Port for the generated environment to run on (default: 3002)",
+        default=3002
+    )
 
     args = parser.parse_args()
 
@@ -142,9 +149,10 @@ def main():
 
     # Create fresh output directory
     os.makedirs(output_dir, exist_ok=True)
-    print(f"📁 Output directory: {output_dir}\n")
+    print(f"📁 Output directory: {output_dir}")
+    print(f"🔌 Generated environment will run on port: {args.port}\n")
 
-    code_agent = CodeGeneratorAgent(llm, output_dir)
+    code_agent = CodeGeneratorAgent(llm, output_dir, port=args.port)
     code_result = code_agent.generate_code(specification=spec)
 
     if not code_result['success']:
@@ -163,10 +171,11 @@ def main():
     print(f"🎉 CLONING COMPLETE!")
     print(f"{'='*70}\n")
     print(f"📂 Fleet environment created at: {output_dir}")
-    print(f"\n📝 Next steps:")
+    print(f"✅ Environment validated and working!")
+    print(f"\n📝 To run the generated environment:")
     print(f"   cd {output_dir}")
-    print(f"   pnpm install")
     print(f"   pnpm run dev")
+    print(f"\n🔌 The API will be available at: http://localhost:{args.port}")
     print(f"\n💡 The environment follows Fleet standards:")
     print(f"   - Uses current.sqlite (auto-copied from seed.db)")
     print(f"   - Supports DATABASE_PATH/ENV_DB_DIR environment variables")

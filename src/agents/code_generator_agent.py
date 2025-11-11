@@ -11,227 +11,206 @@ import json
 
 CODE_GENERATION_SYSTEM_PROMPT = """You are an expert full-stack developer specializing in Fleet environment creation.
 
-## Your Task:
 Generate a complete, production-ready Fleet environment based on the provided API specification.
 
+## Required Files (Complete Checklist):
+
+**Configuration Files:**
+1. .gitignore - MUST exclude: node_modules/, data/*.sqlite, data/*.db, *.sqlite-shm, *.sqlite-wal, mprocs.log, dist/, .env, .DS_Store
+2. .dockerignore - MUST exclude: node_modules, .git, *.log, data/current.sqlite, data/*.sqlite-shm, data/*.sqlite-wal
+3. .npmrc - MUST contain: "side-effects-cache=false"
+4. .github/workflows/deploy.yml - Basic CI/CD workflow
+
+**Root Configuration:**
+5. pnpm-workspace.yaml - MUST be: packages: ["server"] (ONLY server, NOT mcp or data!)
+6. package.json - Root package with:
+   - "packageManager": "pnpm@9.15.1"
+   - "dev": "mprocs" script
+   - engines: { "node": ">=20.9.0", "pnpm": "^9.15.1" }
+7. mprocs.yaml - Multi-process config (see format below)
+8. Dockerfile - Production deployment with pnpm@9.15.1
+9. README.md - Complete setup instructions
+
+**Data Layer:**
+10. data/schema.sql - Database schema (NO CHECK constraints!)
+
+**Server Package:**
+11. server/package.json - TypeScript + Express dependencies
+12. server/tsconfig.json - TypeScript configuration
+13. server/src/lib/db.ts - Database connection with path precedence (see below)
+14. server/src/routes/[resource].ts - Route files for each resource
+15. server/src/index.ts - Main Express server
+
+**MCP Package:**
+16. mcp/pyproject.toml - Python dependencies with uv
+17. mcp/src/[app_name]_mcp/__init__.py - Package init
+18. mcp/src/[app_name]_mcp/server.py - MCP server (see format below)
+19. mcp/src/[app_name]_mcp/client.py - API client
+20. mcp/README.md - MCP setup instructions
+
+**Documentation:**
+21. API_DOCUMENTATION.md - Complete API documentation with all endpoints
+
 ## Fleet Requirements (CRITICAL):
-1. **Database Configuration**:
-   - SQLite with WAL mode enabled
-   - INTEGER AUTOINCREMENT for primary keys
-   - NO CHECK constraints in schema.sql (use validation in code)
-   - Foreign keys enabled
-   - seed.db ready for immediate use (contains schema + initial data)
-   - Uses current.sqlite at runtime (auto-copied from seed.db if not exists)
-   - Database path precedence: DATABASE_PATH → ENV_DB_DIR → ./data/current.sqlite
 
-2. **Server (HTTP API)**:
-   - HTTP server in server/ directory
-   - Technology: TypeScript + Express (default), but other stacks acceptable:
-     - Alternative: Python + FastAPI, Go + stdlib, Bun + Elysia, etc.
-   - Proper error handling (try/catch or equivalent)
-   - CORS enabled for cross-origin requests
-   - Real SQL queries (no mocks!)
-   - Routes/endpoints organized by resource
-   - SQLite database access via:
-     - Node.js: better-sqlite3 (with or without Drizzle ORM)
-     - Python: sqlite3 module
-     - Go: database/sql
-     - Other: any SQLite driver
+### 1. Database Configuration
+- **SQLite with WAL mode enabled** - Enable in connection code: `PRAGMA journal_mode=WAL`
+- **INTEGER AUTOINCREMENT for primary keys** - Use `INTEGER PRIMARY KEY AUTOINCREMENT`, not just `AUTOINCREMENT`
+- **NO CHECK constraints in schema.sql** - Use validation in application code instead
+- **Foreign keys enabled** - Enable in connection code: `PRAGMA foreign_keys=ON`
+- **seed.db ready for immediate use** - Must contain schema + initial sample data (not empty!)
+- **Uses current.sqlite at runtime** - Auto-copied from seed.db if doesn't exist
+- **Database path precedence** - DATABASE_PATH → ENV_DB_DIR → ./data/current.sqlite
 
-3. **MCP Server (Python)**:
-   - Python-based MCP server in mcp/ directory
-   - Uses uv for dependency management (pyproject.toml)
-   - Implements Model Context Protocol for LLM interaction
-   - Fetches data from local server API (http://localhost:3001/api)
-   - Environment variable: APP_ENV=local (for local dev) or production
-     - APP_ENV=local → fetches from http://localhost:3001/api
-     - APP_ENV=production → fetches from production API URL
-   - Basic tools: process_data, execute_query, load_* functions
+server/src/lib/db.ts MUST implement this exact pattern:
+```typescript
+function resolveDatabasePath() {
+  // 1. DATABASE_PATH env var (highest priority)
+  if (process.env.DATABASE_PATH?.trim()) {
+    return path.resolve(process.env.DATABASE_PATH);
+  }
+  // 2. ENV_DB_DIR env var
+  if (process.env.ENV_DB_DIR) {
+    return path.join(process.env.ENV_DB_DIR, 'current.sqlite');
+  }
+  // 3. Default
+  return path.join(__dirname, '../../../data/current.sqlite');
+}
 
-4. **Monorepo Structure (pnpm workspace)**:
-   - Root pnpm-workspace.yaml defining ONLY Node.js packages (server)
-   - Do NOT include mcp/ in pnpm-workspace.yaml (it's Python, not Node.js)
-   - Do NOT include data/ in pnpm-workspace.yaml (it's just database files)
-   - Root package.json with workspace scripts and "packageManager": "pnpm@9.15.1"
-   - server/ package with its own package.json
-   - mcp/ package with Python dependencies (pyproject.toml, NOT package.json)
-   - mprocs.yaml for running all services together
+const DATABASE_PATH = resolveDatabasePath();
 
-5. **Optional Components (based on API complexity)**:
-   - Client (SvelteKit): Only if cloning a full-stack app with UI
-   - Meilisearch: Only if API has search/full-text search functionality
-   - Image handling: Only if API serves/manages images (S3 integration)
-   - Additional services: Based on what the API exploration discovers
-   - For simple APIs: Just generate server + mcp (no client needed)
+// Auto-copy seed.db to current.sqlite if not exists
+if (!fs.existsSync(DATABASE_PATH)) {
+  const seedPath = path.join(path.dirname(DATABASE_PATH), 'seed.db');
+  if (fs.existsSync(seedPath)) {
+    fs.copyFileSync(seedPath, DATABASE_PATH);
+  }
+}
 
-6. **File Structure**:
-   ```
-   cloned-env/
-   ├── pnpm-workspace.yaml       # pnpm workspace config
-   ├── package.json              # Root package.json with "dev": "mprocs"
-   ├── mprocs.yaml               # Multi-process dev config
-   ├── Dockerfile                # Production deployment
-   ├── README.md                 # Setup instructions
-   ├── data/
-   │   ├── schema.sql           # Database schema (NO CHECK constraints)
-   │   └── seed.db              # Source database (ready to copy)
-   ├── server/
-   │   ├── package.json         # Server dependencies
-   │   ├── tsconfig.json        # TypeScript config
-   │   ├── src/
-   │   │   ├── index.ts        # Main Express server
-   │   │   ├── lib/
-   │   │   │   └── db.ts       # Database connection with path precedence
-   │   │   └── routes/
-   │   │       └── [resource].ts
-   └── mcp/
-       ├── pyproject.toml       # Python dependencies (uv)
-       ├── src/
-       │   └── [app]_mcp/
-       │       ├── __init__.py
-       │       ├── server.py    # MCP server implementation
-       │       └── client.py    # API client
-       └── README.md            # MCP setup instructions
-   ```
-
-7. **Database Path Handling (CRITICAL)**:
-   In server/src/lib/db.ts, implement this precedence:
-   ```typescript
-   function resolveDatabasePath() {
-     // 1. DATABASE_PATH env var (highest priority)
-     if (process.env.DATABASE_PATH?.trim()) {
-       return path.resolve(process.env.DATABASE_PATH);
-     }
-     // 2. ENV_DB_DIR env var
-     if (process.env.ENV_DB_DIR) {
-       return path.join(process.env.ENV_DB_DIR, 'current.sqlite');
-     }
-     // 3. Default: ./data/current.sqlite
-     return path.join(__dirname, '../../../data/current.sqlite');
-   }
-
-   const DATABASE_PATH = resolveDatabasePath();
-
-   // Auto-copy seed.db to current.sqlite if not exists
-   if (!fs.existsSync(DATABASE_PATH)) {
-     const seedPath = path.join(path.dirname(DATABASE_PATH), 'seed.db');
-     if (fs.existsSync(seedPath)) {
-       fs.copyFileSync(seedPath, DATABASE_PATH);
-     }
-   }
-   ```
-
-## Available Tools:
-- write_file: Write content to a file in the output directory
-- create_seed_database: Create seed.db from schema.sql
-- complete_generation: Signal when all files are generated
-
-## Code Style:
-- **Default Stack**: TypeScript + Express for server (well-tested, good ecosystem)
-  - Note: Other stacks (Python, Go, Rust) are valid but not currently supported by this generator
-- Use TypeScript with proper types for server code
-- Use Python 3.11+ for MCP server
-- Use better-sqlite3 for database (Node.js)
-- Proper error handling with try/catch
-- RESTful endpoint design
-- Consistent response format: { data: ..., error: ... }
-
-## Required Configuration Files:
-
-### .gitignore
-MUST exclude:
-- node_modules/ and **/node_modules
-- Runtime SQLite: data/*.sqlite, data/*.db, *.sqlite-shm, *.sqlite-wal
-- Logs: mprocs.log, *.log
-- Build artifacts: dist/, build/, .cache
-- Environment: .env, .env.local, server/.env
-- Editor: .vscode, .idea, .cursor/
-- OS: .DS_Store
-- Meilisearch: meilisearch, meilisearch.db/, data/meilisearch/
-
-### .dockerignore
-MUST exclude:
-- Development: node_modules, .git, .gitignore, README.md
-- Logs and cache: *.log, .cache, coverage
-- Environment: .env, .env.local
-- Editors: .vscode, .idea
-- Runtime SQLite: data/current.sqlite, data/*.sqlite-shm, data/*.sqlite-wal
-- Meilisearch data: data/meilisearch
-
-### .npmrc
-MUST contain:
-```
-side-effects-cache=false
+// Enable WAL mode and foreign keys
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 ```
 
-### .github/workflows/deploy.yml
-Basic GitHub Actions workflow for CI/CD (build and deploy Docker image).
-Include: checkout, Docker build, optional deployment steps.
-Make it generic and environment-agnostic (no hardcoded AWS/ECR credentials).
+### 2. Server (HTTP API)
+- **HTTP server in server/ directory**
+- **Technology**: TypeScript + Express (standard stack)
+- **Proper error handling** - try/catch blocks around route handlers
+- **CORS enabled** - For cross-origin requests
+- **Real SQL queries** - No mocks! Actual database queries
+- **Routes organized by resource** - One file per resource in server/src/routes/
+- **Database access**: Use better-sqlite3 library
 
-### API_DOCUMENTATION.md
-MUST document:
-- API overview and base URL
-- All endpoints with HTTP methods
-- Request parameters (query, path, body)
-- Response formats and examples
-- Error responses
-Auto-generate from the specification's endpoints list.
+### 3. MCP Server (Python)
+- **Python-based MCP server** in mcp/ directory
+- **Uses uv for dependency management** - pyproject.toml, not requirements.txt
+- **Implements Model Context Protocol** for LLM interaction
+- **Fetches data from local server API** - http://localhost:{port}/api
+- **Environment variable handling**:
+  - APP_ENV=local → fetches from http://localhost:{port}/api
+  - APP_ENV=production → fetches from production API URL
+- **Basic tools**: get_all_resources, get_resource_by_id, search capabilities
 
-### mprocs.yaml
-CRITICAL: cmd must be an ARRAY, not a string!
-Correct format:
+### 4. MCP Server Protocol
+mcp/src/{app_name}_mcp/server.py MUST use this exact structure:
+```python
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+import asyncio
+
+app = Server("{app_name}-mcp")
+
+@app.list_tools()
+async def list_tools():
+    return [{"name": "...", "description": "...", "inputSchema": {...}}]
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict):
+    # Implementation
+    return [{"type": "text", "text": "result"}]
+
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        # CRITICAL: Use create_initialization_options()!
+        await app.run(read_stream, write_stream, app.create_initialization_options())
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+DO NOT use `get_capabilities(notification_options=None)` - it will fail!
+
+### 5. Monorepo Structure (pnpm workspace)
+- **Root pnpm-workspace.yaml** - MUST define ONLY Node.js packages: ["server"]
+  - Do NOT include mcp/ (it's Python, not Node.js)
+  - Do NOT include data/ (it's just database files, not a package)
+- **Root package.json** - Must have:
+  - "packageManager": "pnpm@9.15.1"
+  - "dev": "mprocs" script
+  - engines: { "node": ">=20.9.0", "pnpm": "^9.15.1" }
+- **server/ package** - Has its own package.json with TypeScript + Express dependencies
+- **mcp/ package** - Python dependencies in pyproject.toml (NOT package.json)
+- **mprocs.yaml** - For running all services together
+- **Dockerfile** - MUST use pnpm@9.15.1 (NOT 8.x!)
+
+### 6. mprocs.yaml Format
+CRITICAL: cmd MUST be array, not string!
 ```yaml
 procs:
   server:
-    cmd: ["pnpm", "--filter", "server", "dev"]
-    cwd: ./
+    cmd: ["pnpm", "--filter", "server", "dev"]  # Array, not string!
     env:
       NODE_ENV: development
-      PORT: "3001"
+      PORT: "{port}"
   mcp:
-    cmd: ["uv", "run", "python", "-m", "books_mcp.server"]
-    cwd: ./mcp
+    cmd: ["uv", "run", "python", "-m", "{app}_mcp.server"]
     env:
       APP_ENV: local
-      API_BASE_URL: http://localhost:3001
+      API_BASE_URL: "http://localhost:{port}"
 ```
-WRONG: cmd: pnpm --filter server dev  (string - will fail!)
-RIGHT: cmd: ["pnpm", "--filter", "server", "dev"]  (array - works!)
 
-## Steps (Follow in Order):
-1. Create .gitignore (exclude node_modules, runtime SQLite files, logs, etc.)
-2. Create .dockerignore (exclude dev files from Docker builds)
-3. Create .npmrc (pnpm configuration: side-effects-cache=false)
-4. Create pnpm-workspace.yaml
-5. Create root package.json with workspace config
-6. Create mprocs.yaml with server and mcp processes
-7. Create Dockerfile for production (use pnpm@9.15.1, NOT 8.x!)
-8. Create .github/workflows/deploy.yml for CI/CD (optional but recommended)
-9. Create server/package.json with dependencies
-10. Create server/tsconfig.json
-11. Create data/schema.sql with proper SQLite schema (NO CHECK constraints)
-12. Create server/src/lib/db.ts with DATABASE_PATH precedence logic
-13. Create server/src/routes/[resource].ts for each resource
-14. Create server/src/index.ts as main server
-15. Create mcp/pyproject.toml with uv dependencies
-16. Create mcp/src/[app]_mcp/server.py (basic MCP server)
-17. Create mcp/src/[app]_mcp/client.py (API client)
-18. Create mcp/README.md with MCP setup instructions
-19. Create API_DOCUMENTATION.md with all endpoint documentation
-20. Create root README.md with full setup instructions
-21. Create seed database from schema
-22. Call complete_generation when done
+### 7. Port Configuration
+Server MUST use PORT environment variable:
+```typescript
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(\`Server listening on port \${PORT}\`));
+```
 
-Be thorough and ensure all files are production-ready and Fleet-compliant!
+## Implementation Details:
+- Use TypeScript + Express for server
+- Use better-sqlite3 for database
+- CORS enabled
+- Proper error handling
+- RESTful endpoints
+
+## Available Tools:
+- write_file: Write any file to output directory
+- create_seed_database: Create seed.db from schema.sql
+- validate_environment: Run pnpm install + build + dev, check health endpoint
+- complete_generation: Mark as done (only after validation succeeds!)
+
+## Workflow:
+1. Generate ALL 21 files listed above using write_file
+2. Call create_seed_database
+3. Call validate_environment
+4. If validation fails:
+   - Read error messages carefully
+   - Identify which files have issues
+   - Use write_file to fix the problems
+   - Re-run validate_environment
+5. Repeat step 4 until validation succeeds
+6. Call complete_generation
+
+IMPORTANT: Do NOT call complete_generation until validate_environment returns success=true!
+Validation will catch missing dependencies, TypeScript errors, config issues, etc.
 """
 
 
 class CodeGeneratorAgent(BaseAgent):
     """Agent that generates Fleet environment code from specification"""
 
-    def __init__(self, llm: LLMClient, output_dir: str):
+    def __init__(self, llm: LLMClient, output_dir: str, port: int = 3002):
         self.output_dir = output_dir
+        self.port = port
         self.generated_files = []
 
         # Define tools for code generation
@@ -273,8 +252,35 @@ class CodeGeneratorAgent(BaseAgent):
                 }
             },
             {
+                "name": "validate_environment",
+                "description": """Run validation checks on the generated environment to ensure it works correctly.
+
+This will:
+1. Run 'pnpm install' to install all dependencies
+2. Run 'pnpm build' to compile TypeScript and build the project
+3. Start 'pnpm run dev' and check the health endpoint at http://localhost:3001/health
+
+Returns:
+- success: true if all checks pass, false otherwise
+- phase: which phase failed (install/build/dev) if validation fails
+- errors: error messages from stderr if any phase fails
+- stdout: full output for debugging
+- message: human-readable description of what happened
+
+You should call this tool AFTER creating all files and the seed database, but BEFORE calling complete_generation.
+If validation fails, carefully read the error messages, identify which files have issues, and fix them.
+Then run validate_environment again. Repeat until validation succeeds.
+
+IMPORTANT: Do not call complete_generation until validate_environment returns success=true!""",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
                 "name": "complete_generation",
-                "description": "Signal that code generation is complete",
+                "description": "Signal that code generation is complete and validated. Only call this AFTER validate_environment succeeds!",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -293,7 +299,7 @@ class CodeGeneratorAgent(BaseAgent):
             tools=tools,
             tool_executor=self._execute_tool,
             system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
-            max_iterations=25  # Reduced from 50 - typically completes in 10-15 iterations
+            max_iterations=40  # Increased to allow for validation + fix iterations
         )
 
     def _execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Any:
@@ -302,6 +308,8 @@ class CodeGeneratorAgent(BaseAgent):
             return self._write_file(tool_input)
         elif tool_name == "create_seed_database":
             return self._create_seed_database(tool_input)
+        elif tool_name == "validate_environment":
+            return self._validate_environment(tool_input)
         elif tool_name == "complete_generation":
             return {
                 "complete": True,
@@ -365,6 +373,174 @@ class CodeGeneratorAgent(BaseAgent):
             "message": f"Database created: {params.get('output_path')}"
         }
 
+    def _validate_environment(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run validation checks on the generated environment"""
+        import subprocess
+        import time
+        import signal
+
+        # Step 1: pnpm install
+        print("🔍 Running pnpm install...")
+        try:
+            result = subprocess.run(
+                ["pnpm", "install"],
+                cwd=self.output_dir,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "phase": "install",
+                    "errors": result.stderr,
+                    "stdout": result.stdout,
+                    "message": "❌ pnpm install failed. Check the error messages and fix package.json or dependencies."
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "phase": "install",
+                "errors": "Command timed out after 120 seconds",
+                "stdout": "",
+                "message": "❌ pnpm install timed out."
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "phase": "install",
+                "errors": str(e),
+                "stdout": "",
+                "message": f"❌ pnpm install failed with exception: {str(e)}"
+            }
+
+        print("✅ pnpm install succeeded")
+
+        # Step 2: pnpm build
+        print("🔍 Running pnpm build...")
+        try:
+            result = subprocess.run(
+                ["pnpm", "build"],
+                cwd=self.output_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "phase": "build",
+                    "errors": result.stderr,
+                    "stdout": result.stdout,
+                    "message": "❌ pnpm build failed. Check TypeScript errors and fix the code."
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "phase": "build",
+                "errors": "Command timed out after 60 seconds",
+                "stdout": "",
+                "message": "❌ pnpm build timed out."
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "phase": "build",
+                "errors": str(e),
+                "stdout": "",
+                "message": f"❌ pnpm build failed with exception: {str(e)}"
+            }
+
+        print("✅ pnpm build succeeded")
+
+        # Step 3: Start dev server and check health
+        print("🔍 Starting dev server and checking health endpoint...")
+        proc = None
+        try:
+            # Start the dev server in background
+            proc = subprocess.Popen(
+                ["pnpm", "run", "dev"],
+                cwd=self.output_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+            )
+
+            # Wait for server to start
+            time.sleep(8)  # Give it more time to start both server and MCP
+
+            # Check if process is still running
+            if proc.poll() is not None:
+                stdout, stderr = proc.communicate()
+                return {
+                    "success": False,
+                    "phase": "dev",
+                    "errors": stderr,
+                    "stdout": stdout,
+                    "message": "❌ Server process exited immediately. Check for runtime errors."
+                }
+
+            # Try to hit the health endpoint
+            try:
+                import urllib.request
+                health_url = f"http://localhost:{self.port}/health"
+                req = urllib.request.Request(health_url)
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    if response.status != 200:
+                        return {
+                            "success": False,
+                            "phase": "dev",
+                            "errors": f"Health check returned status {response.status}",
+                            "stdout": "",
+                            "message": f"❌ Health check failed with status {response.status}"
+                        }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "phase": "dev",
+                    "errors": str(e),
+                    "stdout": "",
+                    "message": f"❌ Failed to connect to health endpoint: {str(e)}"
+                }
+
+            print("✅ Health check passed")
+
+            return {
+                "success": True,
+                "message": "🎉 All validation checks passed! Environment is working correctly."
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "phase": "dev",
+                "errors": str(e),
+                "stdout": "",
+                "message": f"❌ Validation failed with exception: {str(e)}"
+            }
+        finally:
+            # Clean up: kill the dev server process
+            if proc is not None:
+                try:
+                    if hasattr(os, 'killpg'):
+                        # Kill the process group (to kill mprocs and all children)
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    else:
+                        proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    # Force kill if needed
+                    try:
+                        if hasattr(os, 'killpg'):
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        else:
+                            proc.kill()
+                    except Exception:
+                        pass
+
     def generate_code(self, specification: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate Fleet environment code from specification
@@ -382,67 +558,40 @@ class CodeGeneratorAgent(BaseAgent):
 
 {spec_json}
 
-Create all necessary files following Fleet standards. You MUST generate ALL of these files:
+IMPORTANT: The generated environment must run on port {self.port}.
+- Set PORT={self.port} in mprocs.yaml server env
+- Set API_BASE_URL=http://localhost:{self.port} in mprocs.yaml mcp env
+- Document port {self.port} in README.md
+- Server should use process.env.PORT with fallback to {self.port}
 
-**Configuration Files (CRITICAL - Do these FIRST):**
-1. .gitignore - Exclude node_modules, runtime SQLite files (*.sqlite-shm, *.sqlite-wal, data/*.sqlite, data/*.db), logs, .env, dist/, .cache, .DS_Store, meilisearch
-2. .dockerignore - Exclude dev files (node_modules, .git, .env, *.log, data/current.sqlite, data/*.sqlite-shm, data/*.sqlite-wal)
-3. .npmrc - Single line: "side-effects-cache=false"
-4. .github/workflows/deploy.yml - Basic CI/CD workflow (checkout, Docker build, generic deployment steps)
+Follow the workflow described in the system prompt:
 
-**Root Configuration:**
-5. pnpm-workspace.yaml - Define packages: ["server"] (ONLY server, NOT mcp!)
-6. package.json - Root package with:
-   - "packageManager": "pnpm@9.15.1"
-   - "dev": "mprocs" script
-   - engines: node ">=20.9.0", pnpm "^9.15.1"
-7. mprocs.yaml - Multi-process config for server + mcp
-8. Dockerfile - Production deployment with pnpm@9.15.1 (NOT 8.x!)
-9. README.md - Complete setup instructions with pnpm run dev
+1. Generate all necessary files using write_file:
+   - Configuration files (.gitignore, .dockerignore, .npmrc, .github/workflows/deploy.yml)
+   - Root configs (pnpm-workspace.yaml, package.json, mprocs.yaml, Dockerfile)
+   - Data layer (data/schema.sql)
+   - Server package (server/package.json, tsconfig.json, src/lib/db.ts, src/routes/, src/index.ts)
+   - MCP package (mcp/pyproject.toml, src/{{app_name}}_mcp/server.py, client.py, __init__.py)
+   - Documentation (README.md, API_DOCUMENTATION.md, mcp/README.md)
 
-**Data Layer:**
-10. data/schema.sql - Database schema (NO CHECK constraints!)
-11. Create seed.db from schema (use create_seed_database tool)
+2. Call create_seed_database to create the seed.db file
 
-**Server Package (server/):**
-12. server/package.json - Dependencies: express, better-sqlite3, cors, typescript, tsx
-13. server/tsconfig.json - TypeScript configuration
-14. server/src/lib/db.ts - Database connection with DATABASE_PATH→ENV_DB_DIR→default precedence
-15. server/src/routes/[resource].ts - One file per resource
-16. server/src/index.ts - Main Express server
+3. Call validate_environment to test the generated environment
+   - This will run: pnpm install, pnpm build, pnpm run dev
+   - And check the health endpoint
 
-**MCP Package (mcp/):**
-17. mcp/pyproject.toml - Python dependencies with uv (mcp, httpx, etc.)
-18. mcp/src/[app_name]_mcp/__init__.py - Package init
-19. mcp/src/[app_name]_mcp/server.py - MCP server with basic tools
-20. mcp/src/[app_name]_mcp/client.py - API client for local server
-21. mcp/README.md - MCP setup and usage instructions
+4. If validation fails:
+   - Read the error messages carefully
+   - Identify which files have issues
+   - Use write_file to fix the problems
+   - Call validate_environment again
 
-**Documentation:**
-22. API_DOCUMENTATION.md - Complete API documentation with all endpoints, parameters, responses
+5. Repeat step 4 until validation succeeds
 
-CRITICAL Requirements:
-- .gitignore MUST exclude: node_modules/, data/*.sqlite, data/*.db, *.sqlite-shm, *.sqlite-wal, mprocs.log, dist/, .env, .DS_Store
-- .dockerignore MUST exclude: node_modules, .git, *.log, data/current.sqlite, data/*.sqlite-shm, data/*.sqlite-wal
-- .npmrc MUST contain exactly: "side-effects-cache=false"
-- Dockerfile MUST use pnpm@9.15.1 (NOT 8.15.0 or any 8.x version!)
-- pnpm-workspace.yaml MUST ONLY include ["server"], NOT ["server", "mcp"] or ["server", "data"]
-- mcp/ is a Python package (pyproject.toml), NOT a Node.js package
-- data/ is NOT a workspace package (no package.json)
-- Root package.json MUST have "packageManager": "pnpm@9.15.1"
-- Root package.json MUST have engines: node ">=20.9.0", pnpm "^9.15.1"
-- server/src/lib/db.ts MUST use current.sqlite (not seed.db directly)
-- MUST implement DATABASE_PATH → ENV_DB_DIR → default precedence
-- MUST auto-copy seed.db to current.sqlite if not exists
-- mprocs.yaml MUST run both server and mcp processes
-- mprocs.yaml MUST set APP_ENV=local for MCP process (not RAMP_ENV)
-- mprocs.yaml cmd MUST be an array: ["pnpm", "run", "dev"], NOT a string "pnpm run dev"
-- Root package.json MUST have "dev": "mprocs" script
-- API_DOCUMENTATION.md MUST document ALL endpoints from the specification
+6. Only after validation returns success=true, call complete_generation
 
-Use write_file for each file, then create_seed_database, then complete_generation.
-
-Generate production-ready code with proper error handling!"""
+Remember: The validation will catch TypeScript errors, missing dependencies, incorrect configs, etc.
+Use those error messages to guide your fixes. You have all the context needed to debug and fix issues."""
 
         result = self.run(initial_prompt)
 
